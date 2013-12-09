@@ -156,15 +156,16 @@ class Model(django.db.models.base.Model):
                                created=(not record_exists))
 
     @classmethod
-    def scoped(base_class, base_dn):
+    def scoped(base_class, base_dn, name=None):
         """
         Returns a copy of the current class with a different base_dn.
         """
         class Meta:
             proxy = True
-        import re
-        suffix = re.sub('[=,]', '_', base_dn)
-        name = "%s_%s" % (base_class.__name__, str(suffix))
+        if name is None:
+            import re
+            suffix = re.sub('[=,]', '_', base_dn)
+            name = "%s_%s" % (base_class.__name__, str(suffix))
         new_class = type(name, (base_class,), {
             'base_dn': base_dn, '__module__': base_class.__module__,
             'Meta': Meta})
