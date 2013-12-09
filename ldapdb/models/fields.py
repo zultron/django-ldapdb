@@ -37,16 +37,28 @@ from ldapdb import escape_ldap_filter
 import datetime
 
 
-class CharField(fields.CharField):
-    def __init__(self, *args, **kwargs):
-        kwargs['max_length'] = 200
-        super(CharField, self).__init__(*args, **kwargs)
-
+class Field:
     def from_ldap(self, value, connection):
         if len(value) == 0:
             return ''
         else:
-            return value[0].decode(connection.charset)
+            return self.convert(value, connection)
+
+    def get_db_prep_lookup(self, lookup_type, value, connection,
+                           prepared=False):
+        "Returns field's value prepared for database lookup."
+        return [self.get_prep_lookup(lookup_type, value)]
+
+    def get_db_prep_save(self, value, connection):
+        return [str(value)]
+
+class CharField(Field, fields.CharField):
+    def __init__(self, *args, **kwargs):
+        kwargs['max_length'] = 200
+        super(CharField, self).__init__(*args, **kwargs)
+
+    def convert(self, value, connection):
+        return value[0].decode(connection.charset)
 
     def get_db_prep_lookup(self, lookup_type, value, connection,
                            prepared=False):
@@ -83,40 +95,18 @@ class CharField(fields.CharField):
         raise TypeError("CharField has invalid lookup: %s" % lookup_type)
 
 
-class ImageField(fields.Field):
-    def from_ldap(self, value, connection):
-        if len(value) == 0:
-            return ''
-        else:
-            return value[0]
-
-    def get_db_prep_lookup(self, lookup_type, value, connection,
-                           prepared=False):
-        "Returns field's value prepared for database lookup."
-        return [self.get_prep_lookup(lookup_type, value)]
-
-    def get_db_prep_save(self, value, connection):
-        return [value]
+class ImageField(Field, fields.Field):
+    def convert(self, value, connection):
+        return value[0]
 
     def get_prep_lookup(self, lookup_type, value):
         "Perform preliminary non-db specific lookup checks and conversions"
         raise TypeError("ImageField has invalid lookup: %s" % lookup_type)
 
 
-class IntegerField(fields.IntegerField):
-    def from_ldap(self, value, connection):
-        if len(value) == 0:
-            return 0
-        else:
-            return int(value[0])
-
-    def get_db_prep_lookup(self, lookup_type, value, connection,
-                           prepared=False):
-        "Returns field's value prepared for database lookup."
-        return [self.get_prep_lookup(lookup_type, value)]
-
-    def get_db_prep_save(self, value, connection):
-        return [str(value)]
+class IntegerField(Field, fields.IntegerField):
+    def convert(self, value, connection):
+        return int(value[0])
 
     def get_prep_lookup(self, lookup_type, value):
         "Perform preliminary non-db specific lookup checks and conversions"
@@ -124,21 +114,9 @@ class IntegerField(fields.IntegerField):
             return value
         raise TypeError("IntegerField has invalid lookup: %s" % lookup_type)
 
-
-class FloatField(fields.FloatField):
-    def from_ldap(self, value, connection):
-        if len(value) == 0:
-            return 0.0
-        else:
-            return float(value[0])
-
-    def get_db_prep_lookup(self, lookup_type, value, connection,
-                           prepared=False):
-        "Returns field's value prepared for database lookup."
-        return [self.get_prep_lookup(lookup_type, value)]
-
-    def get_db_prep_save(self, value, connection):
-        return [str(value)]
+class FloatField(Field, fields.FloatField):
+    def convert(self, value, connection):
+        return float(value[0])
 
     def get_prep_lookup(self, lookup_type, value):
         "Perform preliminary non-db specific lookup checks and conversions"
@@ -146,17 +124,22 @@ class FloatField(fields.FloatField):
             return value
         raise TypeError("FloatField has invalid lookup: %s" % lookup_type)
 
+class BooleanField(Field, fields.BooleanField):
+    def convert(self, value, connection):
+        return value[0] == 'TRUE'
 
-class ListField(fields.Field):
+    def get_prep_lookup(self, lookup_type, value):
+        "Perform preliminary non-db specific lookup checks and conversions"
+        if lookup_type in ('exact'):
+            return value
+        raise TypeError("BooleanField has invalid lookup: %s" % lookup_type)
+
+
+class ListField(Field, fields.Field):
     __metaclass__ = SubfieldBase
 
     def from_ldap(self, value, connection):
         return value
-
-    def get_db_prep_lookup(self, lookup_type, value, connection,
-                           prepared=False):
-        "Returns field's value prepared for database lookup."
-        return [self.get_prep_lookup(lookup_type, value)]
 
     def get_db_prep_save(self, value, connection):
         return [x.encode(connection.charset) for x in value]
@@ -173,7 +156,7 @@ class ListField(fields.Field):
         return value
 
 
-class DateField(fields.DateField):
+class DateField(Field, fields.DateField):
     """
     A text field containing date, in specified format.
     The format can be specified as 'format' argument, as strptime()
@@ -197,11 +180,6 @@ class DateField(fields.DateField):
         else:
             return datetime.datetime.strptime(value[0],
                                               self._date_format).date()
-
-    def get_db_prep_lookup(self, lookup_type, value, connection,
-                           prepared=False):
-        "Returns field's value prepared for database lookup."
-        return [self.get_prep_lookup(lookup_type, value)]
 
     def get_db_prep_save(self, value, connection):
         if not isinstance(value, datetime.date) \
