@@ -34,7 +34,10 @@ import ldap
 
 from django.db.models.sql import aggregates, compiler
 from django.db.models.sql.where import AND, OR
+import re
 
+
+query_dn_re = re.compile(r'^DN (.*)$')
 
 def get_lookup_operator(lookup_type):
     if lookup_type == 'gte':
@@ -53,6 +56,10 @@ def query_as_ldap(query):
     filterstr = ''.join(['(objectClass=%s)' % cls for cls in
                          query.model.object_classes])
     sql, params = where_as_ldap(query.where)
+    m = query_dn_re.match(sql)
+    if m:
+        # DN search
+        return sql
     filterstr += sql
     return '(&%s)' % filterstr
 
@@ -67,6 +74,9 @@ def where_as_ldap(self):
 
         constraint, lookup_type, y, values = item
         comp = get_lookup_operator(lookup_type)
+        if lookup_type == 'exact' and constraint.col == 'dn':
+            # look up an object by DN
+            return 'DN %s' % values, []
         if lookup_type == 'in':
             equal_bits = ["(%s%s%s)" % (constraint.col, comp, value) for value
                           in values]
@@ -151,15 +161,36 @@ class SQLCompiler(object):
 
         attrlist = [x.db_column for x in fields if x.db_column]
 
-        try:
-            vals = self.connection.search_s(
-                self.query.model.base_dn,
-                self.query.model.search_scope,
-                filterstr=filterstr,
-                attrlist=attrlist,
-            )
-        except ldap.NO_SUCH_OBJECT:
-            return
+        m = query_dn_re.match(filterstr)
+        if m:
+            # searching for a DN
+            try:
+                vals = self.connection.search_s(
+                    m.group(1),
+                    ldap.SCOPE_BASE,
+                    filterstr='(objectclass=*)',
+                    attrlist=attrlist,
+                )
+                if not vals:
+                    return
+                if not vals[0][1]:
+                    # no such object
+                    return
+            except ldap.NO_SUCH_OBJECT:
+                return
+            except Exception as e:
+                import sys
+                return
+        else:
+            try:
+                vals = self.connection.search_s(
+                    self.query.model.base_dn,
+                    self.query.model.search_scope,
+                    filterstr=filterstr,
+                    attrlist=attrlist,
+                )
+            except ldap.NO_SUCH_OBJECT:
+                return
 
         # perform sorting
         if self.query.extra_order_by:
